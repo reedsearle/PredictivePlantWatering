@@ -1,5 +1,5 @@
 # PredictivePlantWatering
-IoT Bootcamp priject to automatically water a plant
+IoT Bootcamp project to automatically water a plant
 
 This project uses a Particle Argon microcontroller along witht he following peripherals:
   - OLED display
