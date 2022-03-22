@@ -48,7 +48,7 @@ TCPClient TheClient;
   const int SCREENHEIGHT = 64;       //  Height of screen in pixels
   const int OLEDRESET    = -1;       //  OLED Reset shared with Teensy
   const int WATERTIME    = 1800000;  //  Sample rate = 30 min
-  const int MOISTSET     = 2500;     //  Moisture set point
+  const int MOISTSET     = 1900;     //  Moisture set point
   const int PIXELNUM     = 1;        //  1 pixel in string
   const int SAMPLETIME   = 30000;    // sample time of 30 sec
   const int PINGTIME     = 120000;   // MQTT Ping time of 2 min
@@ -84,8 +84,9 @@ TCPClient TheClient;
   File       testFile;                  //  **** Change this after unit testing
 
   //  Water Level variables
-  int        waterLevel;
-  int        bright;
+  int        waterLevel;                //  Input from water level sensor
+  //int        bright;
+  bool       feedMe;                    //  Boolean to Zapier to indicate reservoir is almost empty
 
   //  Dust Sensor variables
   unsigned int duration;                 // duration that the sensor pin is low during a given sample - uS
@@ -133,8 +134,9 @@ TCPClient TheClient;
   Adafruit_MQTT_Publish    mqttObj5 = Adafruit_MQTT_Publish   (&mqtt, AIO_USERNAME "/feeds/WaterLevel");
   Adafruit_MQTT_Publish    mqttObj6 = Adafruit_MQTT_Publish   (&mqtt, AIO_USERNAME "/feeds/AirQuality");
   Adafruit_MQTT_Publish    mqttObj7 = Adafruit_MQTT_Publish   (&mqtt, AIO_USERNAME "/feeds/Dust");
+  Adafruit_MQTT_Publish    mqttObj8 = Adafruit_MQTT_Publish   (&mqtt, AIO_USERNAME "/feeds/FeedMe");
 
-  Adafruit_MQTT_Subscribe  mqttObj8 = Adafruit_MQTT_Subscribe (&mqtt, AIO_USERNAME "/feeds/Water");
+  Adafruit_MQTT_Subscribe  mqttObj9 = Adafruit_MQTT_Subscribe (&mqtt, AIO_USERNAME "/feeds/Water");
 
   
 //********************************************************
@@ -179,24 +181,24 @@ void setup() {
     // }
 
   //  Setup TIME
-  Time.zone(-6);                  //  Set time zone to MDT -6 from UTC
+  Time.zone(-6);                                         //  Set time zone to MDT -6 from UTC
   Particle.syncTime();
   dateTime    = Time.timeStr();                          //  get current value of date and time
   timeOnlyOld = dateTime.substring(11,19);               //  Extract value of time from dateTime
 
   //  Setup Moisture Sensor
-  pinMode(MOISTPIN, INPUT);       //  Moisture pin is an input
+  pinMode(MOISTPIN, INPUT);                              //  Moisture pin is an input
   
   //  Setup OLED
-  displayOne.begin(SSD1306_SWITCHCAPVCC, OLEDADDRESS);  // initialize with the I2C addr above
+  displayOne.begin(SSD1306_SWITCHCAPVCC, OLEDADDRESS);   // initialize with the I2C addr above
   displayOne.setTextSize(1);
   displayOne.setTextColor(WHITE);
-  displayOne.clearDisplay();//  Clear the display before going further
-  displayOne.display(); // Force display
+  displayOne.clearDisplay();                              //  Clear the display before going further
+  displayOne.display();                                   // Force display
 
   //  Setup Dust Sensor
   pinMode(DUSTPIN, INPUT);
-  lowPulseOccupancy = 0;        //  Initialize all variables
+  lowPulseOccupancy = 0;                                 //  Initialize all Dust Sensor variables
   ratio             = 0;
   concentration     = 0;  
   sampleStart = millis();
@@ -205,8 +207,11 @@ void setup() {
   currentQuality =-1;
   airQualitySensor.init();
 
+  //  Setup water level Sensor
+  feedMe = false;
+ 
   // Setup MQTT subscription for manual water button feed.
-  mqtt.subscribe(&mqttObj8);
+  mqtt.subscribe(&mqttObj9);
 
 
 
@@ -296,7 +301,7 @@ codeTime = micros();
             AQString = "!!  Fresh air  !!";
       break;      
     }
-    Serial.printf("%s\n", AQString.c_str());
+//    Serial.printf("%s\n", AQString.c_str());
 
 //**************************************
 // Write values to OLED coninuously
@@ -321,13 +326,15 @@ codeTime = micros();
 //**************************************
 // Run water pump and check reservoir level
 //**************************************
+//    Serial.printf("Moisture: %i Moisture set point %i\n",moisture, MOISTSET);
+
   if ((moisture > MOISTSET && (millis() - waterTime) > WATERTIME) || manualButton == 1) {  //  Plant is dry and it's watering time
     waterLevel = changeWaterLevel(true);  //  run motor and check reservoir water level
-    Serial.printf("Water level: %i \n",waterLevel);
+//    Serial.printf("Water level: %i \n",waterLevel);
   }
   waterLevel = changeWaterLevel(false);  //  Dont run motor and check reservoir water level
-  waterPixelBlink(waterLevel);                                          //  Update the water level pixel
- Serial.printf("Water Level %i \n", waterLevel);
+  feedMe = waterPixelBlink(waterLevel);                                          //  Update the water level pixel
+// Serial.printf("Water Level %i \n", waterLevel);
 
 //****************************
 // Publish and Subscribe Data
@@ -356,6 +363,7 @@ codeTime = micros();
       mqttObj5.publish(waterLevel);
       mqttObj6.publish(AQString);
       mqttObj7.publish(concentration);
+      mqttObj8.publish(feedMe);
 //      Serial.printf("Publishing %0.2f \n",value1); 
       } 
     publishTime = millis();
@@ -364,8 +372,8 @@ codeTime = micros();
   // this is our 'wait for incoming subscription packets' busy subloop
   Adafruit_MQTT_Subscribe *subscription;
   while ((subscription = mqtt.readSubscription(10))) {
-    if (subscription == &mqttObj8) {
-      manualButton = atoi((char *)mqttObj8.lastread);
+    if (subscription == &mqttObj9) {
+      manualButton = atoi((char *)mqttObj9.lastread);
       Serial.printf("Received %i from Adafruit.io feed Water \n",manualButton);
     }
   }
@@ -410,9 +418,9 @@ void write_SFFIS_ToOLED(String item1, float item2, float item3, int item4, Strin
     displayOne.setCursor(7,3);
     displayOne.printf(" Time is: %s\n", item1.c_str());
     displayOne.setCursor(7,13);
-    displayOne.printf("    Temp: %0.2f\n", item2);
+    displayOne.printf("    Temp: %0.1f%cF\n", item2, 247);
     displayOne.setCursor(7,23);
-    displayOne.printf("Humidity: %0.2f\n", item3);
+    displayOne.printf("Humidity: %0.1f%%\n", item3);
     displayOne.setCursor(7,33);
     displayOne.printf("Moisture: %i\n", item4);
     displayOne.setCursor(7,43);
@@ -459,7 +467,9 @@ if (motorRun) {
 //      waterPixelBlink
 //********************************************************
 //********************************************************
-void waterPixelBlink (int levelWater) {
+// Code chaged to BANG-BANG because level sensor is not accurate enough for more detail
+bool waterPixelBlink (int levelWater) {
+  bool emptyRes;    // empty reservoir flag
   // const int HIGHWATER = 2000;
   // const int FULLWATER = 1800;
   // const int LOWWATER  = 1500;
@@ -478,10 +488,13 @@ void waterPixelBlink (int levelWater) {
   // }
    if (levelWater < REFILLWATER) {                         //  water level empty
     waterPixel.setPixelColor(0,255,0,0);         //  Set pixel color RED
+    emptyRes = true;
   } else if (levelWater > REFILLWATER) {                        //  water level full
     waterPixel.setPixelColor(0,0,63,0);             //  Set pixel color GREEN
+    emptyRes = false;
   }
     waterPixel.show();
+    return emptyRes;
 }
 
 //********************************************************
