@@ -10,7 +10,7 @@
 #include <Adafruit_MQTT.h>
 #include "Adafruit_MQTT/Adafruit_MQTT.h"
 #include "Adafruit_MQTT/Adafruit_MQTT_SPARK.h"
-#include "cred.h"
+#include "creds.h"
 #include "Adafruit_SSD1306.h"
 #include "Adafruit_GFX.h"
 #include <Adafruit_BME280.h>
@@ -53,7 +53,7 @@ TCPClient TheClient;
   const int SAMPLETIME   = 30000;    // sample time of 30 sec
   const int PINGTIME     = 120000;   // MQTT Ping time of 2 min
   const int PUBLISHTIME  = 30000;    // Publish time of 30 sec
-  const int  DUSTTO      = 100;     // Timeout for dust sensor PULSEIN() read - 100uS
+  const int DUSTTO       = 50;       // Timeout for dust sensor PULSEIN() read - 50uS
  
 
 //****************************
@@ -89,7 +89,9 @@ TCPClient TheClient;
 
   //  Dust Sensor variables
   unsigned int duration;                 // duration that the sensor pin is low during a given sample - uS
-  float        lowPulseOccupancy;        // Duration the pin is low for the sample time of 30 sec - uS
+  unsigned int duration1;                 // duration that the sensor pin is low during a given sample - uS
+  int        lowPulseOccupancy;        // Duration the pin is low for the sample time of 30 sec - uS
+  int        lowPulseOccupancy1;        // Duration the pin is low for the sample time of 30 sec - uS
   float        ratio;                    // Ration of LPO time to total time
   float        concentration;            // Concentration of dut in sample
   bool         dustFlag;                 // Flag for pulse start
@@ -104,6 +106,9 @@ TCPClient TheClient;
 
   //  Subscribe variables
   int        manualButton;
+  //?? TEST CODE
+  int codeTime;
+
 
 //****************************
 // Constructors
@@ -114,6 +119,7 @@ TCPClient TheClient;
   Adafruit_NeoPixel   waterPixel(PIXELNUM, PIXELPIN, WS2812B);
   AirQualitySensor    airQualitySensor(AQSPIN);
   Adafruit_MQTT_SPARK mqtt(&TheClient,AIO_SERVER,AIO_SERVERPORT,AIO_USERNAME,AIO_KEY); 
+
 
 //****************************
 // Feeds
@@ -190,7 +196,6 @@ void setup() {
 
   //  Setup Dust Sensor
   pinMode(DUSTPIN, INPUT);
-  duration          = 0;        //  Reset duration timer
   lowPulseOccupancy = 0;        //  Initialize all variables
   ratio             = 0;
   concentration     = 0;  
@@ -217,6 +222,9 @@ void setup() {
 //********************************************************
 //********************************************************
 void loop() {
+codeTime = micros();
+
+
 //****************************
 // Get Environmental Data
 //****************************
@@ -238,6 +246,7 @@ void loop() {
   moisture = analogRead(MOISTPIN);
 
   //  Get current Dust levels
+  //  The following 2 WHILE statements replace a PULSEIN() statement to allow for a quicker timeout
   duration     = 0;                                    //  Reset duration timer
   dustFlag     = 0;                                    //  Pulse has not started
   dustTime     = 0;                                    //  Time the current pulse started
@@ -257,19 +266,18 @@ void loop() {
     duration = micros() - dustTime;                    //  Measure length of pulse through time difference
     throwAway = digitalRead(DUSTPIN);                  //  ReCheck for end of pulse
   }
-//  duration = pulseIn(DUSTPIN, LOW, DUSTTO);                   //  Read the input pin for low pulses
+  
   lowPulseOccupancy += duration;                       //  summ the total amount of low time
   if (millis() - sampleStart > SAMPLETIME) {           //  Once the air has been samples for 30 sec
     ratio = lowPulseOccupancy / (SAMPLETIME * 10.0);   // calculate the ratio
     concentration = 1.1 * pow(ratio, 3) - 3.8 * pow(ratio, 2) +520.0 * ratio + 0.62;  //  Calculate the concentration
-    Serial.printf("LPO %0.0f, concen %0.2f, ratio %0.2f\n", lowPulseOccupancy, concentration, ratio);
+    Serial.printf("LPO %i, concen %0.2f, ratio %0.2f\n", lowPulseOccupancy, concentration, ratio);
     lowPulseOccupancy = 0;                             // reset the LPO
     sampleStart = millis();                            // Reset the timer
   }
 
   //  Get current Air Quality levels
-    // currentQuality=airQualitySensor.slope();
-    currentQuality = 0;
+    currentQuality=airQualitySensor.slope();
 
     switch (currentQuality) {
       case 0:
@@ -277,15 +285,15 @@ void loop() {
       break;
       
       case 1:
-            AQString = "High pollution!";
+            AQString = " High pollution! ";
       break;
       
       case 2:
-            AQString = "Low pollution!";
+            AQString = " Low pollution!  ";
      break;
       
       case 3:
-            AQString = "Fresh air";
+            AQString = "!!  Fresh air  !!";
       break;      
     }
     Serial.printf("%s\n", AQString.c_str());
@@ -361,9 +369,6 @@ void loop() {
       Serial.printf("Received %i from Adafruit.io feed Water \n",manualButton);
     }
   }
-
-
-
 }
 
 
@@ -441,7 +446,7 @@ if (motorRun) {
     delay(500);                        //  DELAY here on purpose to PRECISELY control water delivery
     digitalWrite(MOTORPIN,  LOW);     // Turn off water pump
   } else {
-    delay(50);
+    delay(10);
   }
 //  digitalWrite(H2OLEVELPWR, HIGH);    // Turn on water level sensor power
   h2oLvl = analogRead(H2OLEVELPIN);      //  Read water level
@@ -455,16 +460,25 @@ if (motorRun) {
 //********************************************************
 //********************************************************
 void waterPixelBlink (int levelWater) {
-   if (levelWater < 2000) {                         //  water level empty
-    bright = callSin (127, 127, 1000);              //  Set brightness to flash at 1S interval
-    waterPixel.setPixelColor(0,bright,0,0);         //  Set pixel color RED
-  } if (levelWater < 2150 && levelWater >= 2000) {  //  water level empty
-    bright = callSin (63, 63, 3000);                //  Set brightness to flash at 5S interval
-    waterPixel.setPixelColor(0,bright,bright,0);    //  Set pixel color YELLOW
-  } if (levelWater < 2500 && levelWater >= 2150) {  //  water level empty
-    bright = callSin (31, 31, 10000);               //  Set brightness to flash at 10S interval
-    waterPixel.setPixelColor(0,0,bright,0);         //  Set pixel color GREEN
-  } if (levelWater > 2500) {                        //  water level full
+  // const int HIGHWATER = 2000;
+  // const int FULLWATER = 1800;
+  // const int LOWWATER  = 1500;
+  const int REFILLWATER = 1500;
+  //  if (levelWater < 2000) {                         //  water level empty
+  //   bright = callSin (127, 127, 1000);              //  Set brightness to flash at 1S interval
+  //   waterPixel.setPixelColor(0,bright,0,0);         //  Set pixel color RED
+  // } if (levelWater < 2150 && levelWater >= 2000) {  //  water level empty
+  //   bright = callSin (63, 63, 3000);                //  Set brightness to flash at 5S interval
+  //   waterPixel.setPixelColor(0,bright,bright,0);    //  Set pixel color YELLOW
+  // } if (levelWater < 2500 && levelWater >= 2150) {  //  water level empty
+  //   bright = callSin (31, 31, 10000);               //  Set brightness to flash at 10S interval
+  //   waterPixel.setPixelColor(0,0,bright,0);         //  Set pixel color GREEN
+  // } if (levelWater > 2500) {                        //  water level full
+  //   waterPixel.setPixelColor(0,0,63,0);             //  Set pixel color GREEN
+  // }
+   if (levelWater < REFILLWATER) {                         //  water level empty
+    waterPixel.setPixelColor(0,255,0,0);         //  Set pixel color RED
+  } else if (levelWater > REFILLWATER) {                        //  water level full
     waterPixel.setPixelColor(0,0,63,0);             //  Set pixel color GREEN
   }
     waterPixel.show();
